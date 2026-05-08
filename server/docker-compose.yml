@@ -1,0 +1,19 @@
+services:
+  home-voice-server:
+    build:
+      context: /home/eruin/home_voice_server
+      dockerfile: server/Dockerfile
+    container_name: home-voice-server
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    environment:
+      KINGOGPT_NO_AUTO_REFRESH: "1"
+      KINGOGPT_SOLVER: /app/kingoGPT/kingogpt_api_solver.py
+      KINGOGPT_TOKEN_CACHE: /app/kingoGPT/state/kingogpt_token_cache.json
+      KINGOGPT_TOKEN_CONFIG: /app/kingoGPT/state/kingogpt_config.json
+      KINGOGPT_PROFILE_DIR: /app/kingoGPT/state/kingogpt_chrome_profile_debug
+      LD_LIBRARY_PATH: /app/home_voice_server/native/third_party/whisper.cpp/build/src:/app/home_voice_server/native/third_party/whisper.cpp/build/ggml/src:/app/home_voice_server/native/third_party/whisper.cpp/build/ggml/src/ggml-cpu
+    volumes:
+      - /home/eruin/home_voice_server:/app/home_voice_server
+      - /home/eruin/kingoGPT:/app/kingoGPT

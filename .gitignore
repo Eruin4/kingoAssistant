@@ -1,0 +1,38 @@
+# Local build outputs
+.gradle/
+build/
+app/build/
+app/.cxx/
+
+# Python runtime artifacts
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Server runtime data
+server/logs/
+server/recordings/
+
+# Secrets and browser/session state
+state/
+kingogpt_token_cache.json
+kingogpt_config.json
+kingogpt_chrome_profile*/
+*.secret
+*.env
+.env
+
+# Vendored/generated native artifacts
+native/third_party/
+*.bin
+*.so
+*.a
+*.apk
+
+# Local IDE / OS
+.idea/
+.vscode/
+*.iml
+Thumbs.db
+.DS_Store
