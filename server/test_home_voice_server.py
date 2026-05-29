@@ -1,0 +1,64 @@
+import tempfile
+import unittest
+from datetime import date, timedelta
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from home_voice_server import ScheduleStore
+
+
+class ScheduleStoreTest(unittest.TestCase):
+    def make_store(self):
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        return ScheduleStore(Path(temp_dir.name) / "schedule.json")
+
+    def test_proposal_accept_adds_task(self):
+        store = self.make_store()
+        response = store.handle_ai_command({"action": "propose_add_task", "title": "Buy milk"})
+        proposal_id = response["schedule"]["proposals"][0]["proposal_id"]
+
+        accepted = store.accept_proposal(proposal_id)
+
+        self.assertEqual("accepted", accepted["status"])
+        self.assertEqual([], accepted["schedule"]["proposals"])
+        self.assertEqual("Buy milk", accepted["schedule"]["tasks"][0]["title"])
+
+    def test_reject_removes_proposal_without_applying(self):
+        store = self.make_store()
+        response = store.handle_ai_command({"action": "propose_add_event", "title": "Meeting"})
+        proposal_id = response["schedule"]["proposals"][0]["proposal_id"]
+
+        rejected = store.reject_proposal(proposal_id)
+
+        self.assertEqual("rejected", rejected["status"])
+        self.assertEqual([], rejected["schedule"]["proposals"])
+        self.assertEqual([], rejected["schedule"]["calendars"]["calendar_1"])
+
+    def test_delete_task_removes_instead_of_marking_done(self):
+        store = self.make_store()
+        added = store.add_task({"title": "Wash dishes"})
+        task_id = added["schedule"]["tasks"][0]["id"]
+
+        deleted = store.delete_task(task_id)
+
+        self.assertTrue(deleted["applied"])
+        self.assertEqual([], deleted["schedule"]["tasks"])
+
+    def test_keeps_events_from_last_two_weeks(self):
+        store = self.make_store()
+        old = date.today() - timedelta(days=15)
+        recent = date.today() - timedelta(days=14)
+
+        store.add_event({"title": "Old", "date": old.isoformat()})
+        store.add_event({"title": "Recent", "date": recent.isoformat()})
+        snapshot = store.snapshot()
+
+        titles = [event["title"] for event in snapshot["calendars"]["calendar_1"]]
+        self.assertNotIn("Old", titles)
+        self.assertIn("Recent", titles)
+
+
+if __name__ == "__main__":
+    unittest.main()

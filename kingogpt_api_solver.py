@@ -101,6 +101,11 @@ def parse_args() -> argparse.Namespace:
         default="default",
         help="Logical session key used to scope prompt-hash room/thread reuse.",
     )
+    parser.add_argument(
+        "--keep-chat-thread",
+        action="store_true",
+        help="Debug option: keep the KingoGPT chat thread instead of deleting it after a successful request.",
+    )
     return parser.parse_args()
 
 
@@ -463,6 +468,16 @@ def delete_chat_thread(token: str, thread_id: int) -> None:
         ) from exc
 
 
+def cleanup_chat_thread(token: str, thread_id: int | None, *, keep: bool) -> None:
+    if keep or thread_id is None:
+        return
+    try:
+        delete_chat_thread(token, thread_id)
+        print(f"[*] Deleted chat thread: {thread_id}")
+    except Exception as exc:
+        print(f"[!] Chat thread cleanup failed: {exc}")
+
+
 def chat_via_api(
     token: str,
     user: dict,
@@ -617,13 +632,19 @@ def main() -> int:
                 chat_room_id=current_room_id,
             )
 
-        write_session_prompt_state(
-            cache,
-            state_key,
-            prompt_hash=prompt_hash,
-            chat_room_id=resolved_room_id,
-            chat_thread_id=resolved_thread_id,
-        )
+        cleanup_chat_thread(token, resolved_thread_id, keep=args.keep_chat_thread)
+        if args.keep_chat_thread:
+            write_session_prompt_state(
+                cache,
+                state_key,
+                prompt_hash=prompt_hash,
+                chat_room_id=resolved_room_id,
+                chat_thread_id=resolved_thread_id,
+            )
+        else:
+            delete_session_prompt_state(cache, state_key)
+            if resolved_room_id is not None:
+                cache["last_chat_room_id"] = int(resolved_room_id)
         if "chat_room_id" not in cache and DEFAULT_CHAT_ROOM_ID is not None:
             cache["chat_room_id"] = DEFAULT_CHAT_ROOM_ID
         write_token_cache(args.token_cache, cache)

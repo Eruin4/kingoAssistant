@@ -1,15 +1,33 @@
 # kingoAssistant
 
-Android voice assistant plus a local Docker server.
+Android schedule assistant plus a local Docker server.
 
 Flow:
 
-1. Android records a 16 kHz mono WAV.
-2. Android uploads the WAV to `http://192.168.0.3:8001/stt-command`.
-3. The Docker server runs `whisper.cpp` STT.
-4. The STT text is sent to `kingogpt_api_solver.py`.
-5. The KingoGPT answer is returned as JSON `response`.
-6. Android reads `response` with Android TTS.
+1. Android shows chat, combined calendar, and sequential task panes.
+2. Tap the mic button once to start recording and again to send the command.
+3. Android uploads a 16 kHz mono WAV to `http://192.168.0.3:8001/stt-command`.
+4. The Docker server runs `whisper.cpp` STT.
+5. The STT text is sent to `kingogpt_api_solver.py` with the current schedule.
+6. KingoGPT returns one structured JSON command such as `propose_add_event` or `propose_add_task`.
+7. The server stores create/delete commands in a proposal queue in `server/state/schedule.json`.
+8. Android shows chat, calendar, and task panes, plus a pending-proposal review band.
+9. Accepted proposals are applied to the calendars or task list; rejected proposals are discarded.
+
+Manual text commands can also be sent from the app. They use the same
+`/command` path and update the same schedule state.
+
+The schedule model is intentionally small:
+
+- `calendars.calendar_1`: first calendar events.
+- `calendars.calendar_2`: second calendar events.
+- `tasks`: non-calendar work items processed in list order.
+- `proposals`: pending AI-suggested changes.
+- `chat_history`: recent user and assistant messages.
+
+Each voice or text input is treated as a loose natural-language request. The AI
+normalizes it into a structured proposal or query response, and the server
+stores the result.
 
 ## Android
 
@@ -45,6 +63,7 @@ Docker compose:
 
 ```bash
 cd ~/home_voice_server/server
+printf 'HOME_VOICE_API_KEY=replace-me\n' > .env
 docker compose up -d --build
 docker compose logs -f
 ```
@@ -59,11 +78,36 @@ Endpoints:
 
 ```text
 GET  /health
+GET  /schedule
 POST /command
 POST /stt-command
+POST /proposal/accept
+POST /proposal/reject
+POST /proposal/accept-all
+POST /event
+POST /task
+DELETE /event/{id}
+DELETE /task/{id}
 ```
 
 `/stt-command` accepts multipart form field `audio` containing WAV data.
+`/command` accepts JSON:
+
+```json
+{"command":"add a meeting to calendar 1 tomorrow at 10 AM"}
+```
+
+Both command paths return the current `schedule` object with `calendars`,
+`tasks`, `proposals`, and `chat_history`.
+
+Proposal endpoints accept JSON:
+
+```json
+{"proposal_id":"p-20260529120000-abcdef"}
+```
+
+`DELETE /task/{id}` removes the task immediately. The app uses this for
+left-swipe task completion.
 
 ## Required Server Volumes
 
@@ -83,6 +127,27 @@ kingogpt_chrome_profile*
 whisper.cpp checkout
 ggml-*.bin model files
 server logs and recordings
+server/state/schedule.json
+```
+
+## KingoGPT Token
+
+The Docker server uses the token cache mounted from:
+
+```text
+/home/eruin/kingoGPT/state/kingogpt_token_cache.json
+```
+
+If the app response says the access token is missing, expired, or auth failed,
+refresh that cache on the host side before restarting the server. The server is
+configured with `KINGOGPT_NO_AUTO_REFRESH=1`, so it does not try to run browser
+login inside the slim Docker container.
+
+KingoGPT chat threads are deleted by default after each successful request. To
+keep them for debugging, run the server with:
+
+```text
+KINGOGPT_KEEP_CHAT_THREAD=1
 ```
 
 Install `whisper.cpp` and a model on the server, for example:

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:background="@drawable/mic_widget_background"
+    android:padding="8dp">
+
+    <TextView
+        android:id="@+id/widget_icon"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="🎤"
+        android:textSize="36sp"
+        android:gravity="center" />
+
+    <TextView
+        android:id="@+id/widget_status"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="탭하여 녹음"
+        android:textSize="12sp"
+        android:textColor="#FFFFFF"
+        android:gravity="center"
+        android:paddingTop="4dp" />
+</LinearLayout>

@@ -13,6 +13,9 @@ venv/
 # Server runtime data
 server/logs/
 server/recordings/
+server/state/
+wake_samples/
+voice/
 
 # Secrets and browser/session state
 state/

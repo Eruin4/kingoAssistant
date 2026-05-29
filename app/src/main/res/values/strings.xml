@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Home Voice</string>
+    <string name="widget_description">Tap the microphone to record and send a voice command.</string>
+</resources>
