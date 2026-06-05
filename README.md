@@ -1,156 +1,244 @@
 # kingoAssistant
 
-Android schedule assistant plus a local Docker server.
+Android voice scheduler backed by a small HomeVoice HTTP server.
 
-Flow:
+The Android app records Korean voice commands, sends WAV audio to the server,
+shows AI-proposed schedule changes, and lets the user accept or reject those
+changes before they are applied. Text commands use the same schedule pipeline as
+voice commands.
 
-1. Android shows chat, combined calendar, and sequential task panes.
-2. Tap the mic button once to start recording and again to send the command.
-3. Android uploads a 16 kHz mono WAV to `https://eruin.mooo.com/voice/stt-command`.
-4. The Docker server runs `whisper.cpp` STT.
-5. The STT text is sent to `kingogpt_api_solver.py` with the current schedule.
-6. KingoGPT returns one structured JSON command such as `propose_add_event` or `propose_add_task`.
-7. The server stores create/delete commands in a proposal queue in `server/state/schedule.json`.
-8. Android shows chat, calendar, and task panes, plus a pending-proposal review band.
-9. Accepted proposals are applied to the calendars or task list; rejected proposals are discarded.
-
-Manual text commands can also be sent from the app. They use the same
-`/command` path and update the same schedule state.
-
-The schedule model is intentionally small:
-
-- `calendars.calendar_1`: first calendar events.
-- `calendars.calendar_2`: second calendar events.
-- `tasks`: non-calendar work items processed in list order.
-- `proposals`: pending AI-suggested changes.
-- `chat_history`: recent user and assistant messages.
-
-Each voice or text input is treated as a loose natural-language request. The AI
-normalizes it into a structured proposal or query response, and the server
-stores the result.
-
-## Android
-
-Project path:
+## Current Production Endpoint
 
 ```text
-app/
+https://eruin.mooo.com/voice
 ```
 
-Build:
+The Android default server URL is:
 
-```powershell
-$env:JAVA_HOME='C:\Program Files\Android\Android Studio\jbr'
-$env:ANDROID_HOME="$env:LOCALAPPDATA\Android\Sdk"
-& "$env:USERPROFILE\.gradle\wrapper\dists\gradle-8.13-bin\5xuhj0ry160q40clulazy9h7d\gradle-8.13\bin\gradle.bat" assembleDebug
+```text
+https://eruin.mooo.com/voice
 ```
 
-APK output:
+The public nginx route proxies `/voice/` to the Docker service listening on
+`127.0.0.1:8001` on the host.
+
+## Repository Layout
+
+```text
+app/                         Android app
+server/home_voice_server.py  HTTP API, schedule store, STT, AI command shaping
+server/docker-compose.yml    Production Docker service definition
+server/Dockerfile            Runtime image for the HomeVoice server
+server/test_home_voice_server.py
+tools/                       Wake-word sample/model helpers
+```
+
+Notable local-only files are ignored by git:
+
+```text
+local.properties
+server/.env
+server/123.txt
+server/state/
+server/logs/
+server/recordings/
+native/third_party/
+voice/
+```
+
+## Android App
+
+Package:
+
+```text
+com.example.homeassistantvoice
+```
+
+Main features:
+
+- Chat, calendar, task, and settings panes.
+- One-tap microphone recording and upload.
+- Home-screen microphone widget service.
+- Pending proposal review band.
+- Swipe-to-delete calendar events and tasks.
+- Optional TTS response playback.
+- Reminder notifications for scheduled events.
+
+The app stores these settings in shared preferences:
+
+```text
+server_url
+api_key
+alarm_minutes
+tts_enabled
+```
+
+Build output:
 
 ```text
 app/build/outputs/apk/debug/app-debug.apk
 ```
 
+This checkout does not include a Gradle wrapper. Build with an installed Gradle
+or the Android Studio bundled Gradle setup, using Java 17 and Android SDK 35.
+
 ## Server
 
-Server files:
+The server stores schedule state in:
 
 ```text
-server/
+server/state/schedule.json
 ```
 
-Docker compose:
-
-```bash
-cd ~/home_voice_server/server
-printf 'HOME_VOICE_API_KEY=replace-me\n' > .env
-docker compose up -d --build
-docker compose logs -f
-```
-
-The server listens on:
+State shape:
 
 ```text
-0.0.0.0:8001
+calendars.calendar_1
+calendars.calendar_2
+tasks
+proposals
+chat_history
+updated_at
+```
+
+Command flow:
+
+1. Android uploads a 16 kHz mono WAV to `/stt-command`.
+2. The server runs `whisper.cpp`.
+3. The transcribed text and recent schedule context are sent to the external
+   KingoGPT solver mounted at `/app/kingoGPT/kingogpt_api_solver.py`.
+4. The solver returns structured JSON such as `propose_add_event`,
+   `propose_add_task`, `query_events`, or `question`.
+5. Create/delete actions are queued as proposals.
+6. The app accepts, rejects, or accepts all proposals.
+
+If the solver is unavailable or returns unusable output, the server falls back
+to a conservative local classifier.
+
+## API
+
+Health does not require an API key:
+
+```text
+GET /health
+```
+
+All other endpoints require:
+
+```text
+Authorization: Bearer <HOME_VOICE_API_KEY>
 ```
 
 Endpoints:
 
 ```text
-GET  /health
-GET  /schedule
-POST /command
-POST /stt-command
-POST /proposal/accept
-POST /proposal/reject
-POST /proposal/accept-all
-POST /event
-POST /task
+GET    /schedule
+POST   /command
+POST   /stt-command
+POST   /proposal/accept
+POST   /proposal/reject
+POST   /proposal/accept-all
+POST   /event
+POST   /task
 DELETE /event/{id}
 DELETE /task/{id}
 ```
 
-`/stt-command` accepts multipart form field `audio` containing WAV data.
-`/command` accepts JSON:
+Text command request:
 
 ```json
-{"command":"add a meeting to calendar 1 tomorrow at 10 AM"}
+{"command":"내일 오후 3시에 회의 추가해줘"}
 ```
 
-Both command paths return the current `schedule` object with `calendars`,
-`tasks`, `proposals`, and `chat_history`.
-
-Proposal endpoints accept JSON:
+Proposal request:
 
 ```json
-{"proposal_id":"p-20260529120000-abcdef"}
+{"proposal_id":"p-20260605123000-abcdef"}
 ```
 
-`DELETE /task/{id}` removes the task immediately. The app uses this for
-left-swipe task completion.
+WAV upload uses multipart form field:
 
-## Required Server Volumes
+```text
+audio
+```
 
-The compose file expects these host paths:
+## Production Deploy
+
+Expected host paths:
 
 ```text
 /home/eruin/home_voice_server
 /home/eruin/kingoGPT
+/mnt/backup/home_voice_recordings
 ```
 
-The following files are intentionally not committed:
+The HomeVoice compose service mounts the app repository at:
 
 ```text
-kingogpt_token_cache.json
-kingogpt_config.json
-kingogpt_chrome_profile*
-whisper.cpp checkout
-ggml-*.bin model files
-server logs and recordings
-server/state/schedule.json
+/app/home_voice_server
 ```
 
-## KingoGPT Token
+and mounts the external KingoGPT checkout at:
 
-The Docker server uses the token cache mounted from:
+```text
+/app/kingoGPT
+```
+
+Deploy or restart on the server:
+
+```bash
+ssh eruin@192.168.0.3
+cd /home/eruin/home_voice_server/server
+docker compose up -d --build
+docker compose logs -f home-voice-server
+```
+
+Verify:
+
+```bash
+curl https://eruin.mooo.com/voice/health
+docker compose -f /home/eruin/home_voice_server/server/docker-compose.yml ps
+```
+
+## Required Secrets
+
+Create `/home/eruin/home_voice_server/server/.env` on the server:
+
+```text
+HOME_VOICE_API_KEY=replace-me
+```
+
+The KingoGPT token cache is provided by the external checkout:
 
 ```text
 /home/eruin/kingoGPT/state/kingogpt_token_cache.json
 ```
 
-If the app response says the access token is missing, expired, or auth failed,
-refresh that cache on the host side before restarting the server. The server is
-configured with `KINGOGPT_NO_AUTO_REFRESH=1`, so it does not try to run browser
-login inside the slim Docker container.
-
-KingoGPT chat threads are deleted by default after each successful request. To
-keep them for debugging, run the server with:
+The container runs with:
 
 ```text
-KINGOGPT_KEEP_CHAT_THREAD=1
+KINGOGPT_NO_AUTO_REFRESH=1
 ```
 
-Install `whisper.cpp` and a model on the server, for example:
+Refresh the KingoGPT token on the host if server responses report missing,
+expired, or unauthorized KingoGPT credentials.
+
+## Whisper
+
+Install `whisper.cpp` under:
+
+```text
+native/third_party/whisper.cpp
+```
+
+Expected Linux defaults:
+
+```text
+native/third_party/whisper.cpp/build/bin/whisper-cli
+native/third_party/whisper.cpp/models/ggml-small.bin
+```
+
+Example setup:
 
 ```bash
 cd ~/home_voice_server/native/third_party
@@ -160,13 +248,22 @@ make -j8
 ./models/download-ggml-model.sh small
 ```
 
-The server defaults to:
+## Tests
 
-```text
-native/third_party/whisper.cpp/build/bin/whisper-cli
-native/third_party/whisper.cpp/models/ggml-small.bin
+Server tests:
+
+```powershell
+py -m unittest server/test_home_voice_server.py
+```
+
+Android build requires Gradle and the Android SDK:
+
+```powershell
+gradle assembleDebug
 ```
 
 ## Privacy
 
-No KingoGPT token cache, login config, browser profile, recordings, logs, Whisper model binaries, or build artifacts should be committed.
+Do not commit API keys, `.env` files, KingoGPT token/config/profile data,
+recordings, logs, Whisper model binaries, native build outputs, or APK build
+artifacts.
