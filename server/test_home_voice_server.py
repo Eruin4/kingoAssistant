@@ -5,7 +5,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from home_voice_server import ScheduleStore
+from home_voice_server import ScheduleStore, build_voice_prompt, fallback_structured_command
 
 
 class ScheduleStoreTest(unittest.TestCase):
@@ -58,6 +58,42 @@ class ScheduleStoreTest(unittest.TestCase):
         titles = [event["title"] for event in snapshot["calendars"]["calendar_1"]]
         self.assertNotIn("Old", titles)
         self.assertIn("Recent", titles)
+
+    def test_fallback_treats_undated_problem_solving_as_task(self):
+        command = fallback_structured_command("선형대수 문제풀이")
+
+        self.assertEqual("propose_add_task", command["action"])
+        self.assertEqual("선형대수 문제풀이", command["title"])
+
+    def test_fallback_treats_dated_problem_solving_as_calendar_event(self):
+        command = fallback_structured_command("다음주 월요일 선형대수 문제풀이")
+
+        self.assertEqual("propose_add_event", command["action"])
+        self.assertEqual("다음주 월요일 선형대수 문제풀이", command["title"])
+        self.assertEqual("00:00", command["start_time"])
+
+    def test_prompt_tells_ai_not_to_ask_dates_for_tasks(self):
+        prompt = build_voice_prompt("선형대수 문제풀이", {"calendars": {}, "tasks": []})
+
+        self.assertIn("Use propose_add_task for non-calendar work items", prompt)
+        self.assertIn("Do not ask when to schedule it", prompt)
+        self.assertIn("set start_time to \"00:00\"", prompt)
+        self.assertIn("선형대수 문제풀이", prompt)
+
+    def test_ai_context_limits_chat_history_to_recent_ten(self):
+        store = self.make_store()
+        for i in range(12):
+            store.handle_ai_command(
+                {"action": "message", "message": f"reply-{i}"},
+                user_text=f"user-{i}",
+            )
+
+        full_history = store.snapshot()["chat_history"]
+        ai_history = store.ai_context()["chat_history"]
+
+        self.assertGreater(len(full_history), 10)
+        self.assertEqual(10, len(ai_history))
+        self.assertEqual(full_history[-10:], ai_history)
 
 
 if __name__ == "__main__":

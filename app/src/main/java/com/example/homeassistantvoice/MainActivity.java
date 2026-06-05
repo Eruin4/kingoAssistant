@@ -29,6 +29,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
@@ -66,9 +67,10 @@ public class MainActivity extends Activity {
     static final String PREF_SERVER_URL = "server_url";
     static final String PREF_API_KEY = "api_key";
     static final String PREF_ALARM_MINUTES = "alarm_minutes";
+    static final String PREF_TTS_ENABLED = "tts_enabled";
     static final String CHANNEL_ID = "mic_service_channel";
     static final String SCHEDULE_CHANNEL_ID = "schedule_alarm_channel";
-    private static final String DEFAULT_SERVER_URL = "https://bamboo.community.mooo.com/voice";
+    private static final String DEFAULT_SERVER_URL = "https://eruin.mooo.com/voice";
     private static final int COLOR_BG = Color.rgb(15, 18, 22);
     private static final int COLOR_ROW = Color.rgb(33, 41, 49);
     private static final int COLOR_TEXT = Color.rgb(238, 243, 247);
@@ -87,15 +89,18 @@ public class MainActivity extends Activity {
     private Button chatTab;
     private Button calendarTab;
     private Button taskTab;
+    private Button settingsTab;
     private EditText serverEdit;
     private EditText apiKeyEdit;
     private EditText alarmMinutesEdit;
+    private CheckBox ttsOffCheck;
     private EditText manualEdit;
     private LinearLayout proposalBand;
     private TextView proposalSummary;
     private LinearLayout chatPane;
     private LinearLayout calendarPane;
     private LinearLayout taskPane;
+    private LinearLayout settingsPane;
     private LinearLayout chatList;
     private RecyclerView calendarRecycler;
     private RecyclerView taskRecycler;
@@ -168,14 +173,6 @@ public class MainActivity extends Activity {
         TextView title = label("Schedule Voice", 26, COLOR_TEXT, true);
         top.addView(title);
 
-        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
-        serverEdit = edit("Server URL", prefs.getString(PREF_SERVER_URL, DEFAULT_SERVER_URL), InputType.TYPE_CLASS_TEXT);
-        apiKeyEdit = edit("API Key", prefs.getString(PREF_API_KEY, ""), InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        alarmMinutesEdit = edit("Reminder minutes", prefs.getString(PREF_ALARM_MINUTES, "15"), InputType.TYPE_CLASS_NUMBER);
-        top.addView(serverEdit);
-        top.addView(apiKeyEdit);
-        top.addView(alarmMinutesEdit);
-
         proposalBand = new LinearLayout(this);
         proposalBand.setOrientation(LinearLayout.VERTICAL);
         proposalBand.setPadding(18, 14, 18, 14);
@@ -191,9 +188,11 @@ public class MainActivity extends Activity {
         chatTab = tabButton("Chat", 0);
         calendarTab = tabButton("Calendar", 1);
         taskTab = tabButton("Tasks", 2);
+        settingsTab = tabButton("Settings", 3);
         tabs.addView(chatTab, weightParams());
         tabs.addView(calendarTab, weightParams());
         tabs.addView(taskTab, weightParams());
+        tabs.addView(settingsTab, weightParams());
         top.addView(tabs);
 
         FrameLayout content = new FrameLayout(this);
@@ -203,12 +202,15 @@ public class MainActivity extends Activity {
         chatPane = pane();
         calendarPane = pane();
         taskPane = pane();
+        settingsPane = pane();
         content.addView(chatPane);
         content.addView(calendarPane);
         content.addView(taskPane);
+        content.addView(settingsPane);
         buildChatPane();
         buildCalendarPane();
         buildTaskPane();
+        buildSettingsPane();
 
         logView = label("", 12, COLOR_MUTED, false);
         logView.setMaxLines(4);
@@ -241,6 +243,7 @@ public class MainActivity extends Activity {
         calendarRecycler = new RecyclerView(this);
         calendarRecycler.setLayoutManager(new LinearLayoutManager(this));
         calendarRecycler.setAdapter(eventAdapter);
+        new ItemTouchHelper(eventSwipeCallback()).attachToRecyclerView(calendarRecycler);
         calendarPane.addView(calendarRecycler, new LinearLayout.LayoutParams(-1, 0, 1f));
 
         LinearLayout actions = new LinearLayout(this);
@@ -263,6 +266,36 @@ public class MainActivity extends Activity {
         actions.addView(actionButton("Add task", v -> showTaskDialog()), weightParams());
         actions.addView(actionButton("Refresh", v -> refreshSchedule()), weightParams());
         taskPane.addView(actions);
+    }
+
+    private void buildSettingsPane() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        serverEdit = edit("Server URL", normalizeServerUrl(prefs.getString(PREF_SERVER_URL, DEFAULT_SERVER_URL)), InputType.TYPE_CLASS_TEXT);
+        apiKeyEdit = edit("API Key", prefs.getString(PREF_API_KEY, ""), InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        alarmMinutesEdit = edit("Reminder minutes", prefs.getString(PREF_ALARM_MINUTES, "15"), InputType.TYPE_CLASS_NUMBER);
+        settingsPane.addView(serverEdit);
+        settingsPane.addView(apiKeyEdit);
+        settingsPane.addView(alarmMinutesEdit);
+
+        ttsOffCheck = new CheckBox(this);
+        ttsOffCheck.setText("Disable TTS");
+        ttsOffCheck.setTextColor(COLOR_TEXT);
+        ttsOffCheck.setTextSize(16);
+        ttsOffCheck.setPadding(10, 12, 10, 12);
+        ttsOffCheck.setButtonTintList(android.content.res.ColorStateList.valueOf(COLOR_ACCENT));
+        ttsOffCheck.setBackground(box(COLOR_ROW, 8));
+        ttsOffCheck.setChecked(!prefs.getBoolean(PREF_TTS_ENABLED, true));
+        ttsOffCheck.setOnCheckedChangeListener((buttonView, isChecked) -> savePrefs());
+        settingsPane.addView(ttsOffCheck, margins(-1, -2, 0, 0, 0, 10));
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        actions.addView(actionButton("Save", v -> {
+            savePrefs();
+            log("Settings saved.");
+        }), weightParams());
+        actions.addView(actionButton("Refresh", v -> refreshSchedule()), weightParams());
+        settingsPane.addView(actions);
     }
 
     private ItemTouchHelper.SimpleCallback taskSwipeCallback() {
@@ -317,6 +350,65 @@ public class MainActivity extends Activity {
         };
     }
 
+    private ItemTouchHelper.SimpleCallback eventSwipeCallback() {
+        return new ItemTouchHelper.SimpleCallback(0, ItemTouchHelper.LEFT) {
+            private final Paint backgroundPaint = new Paint();
+            private final Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+            {
+                backgroundPaint.setColor(COLOR_WARN);
+                textPaint.setColor(Color.WHITE);
+                textPaint.setTextSize(dp(15));
+                textPaint.setTypeface(Typeface.DEFAULT_BOLD);
+            }
+
+            @Override
+            public boolean onMove(RecyclerView recyclerView, RecyclerView.ViewHolder viewHolder, RecyclerView.ViewHolder target) {
+                return false;
+            }
+
+            @Override
+            public void onSwiped(RecyclerView.ViewHolder viewHolder, int direction) {
+                int position = viewHolder.getAdapterPosition();
+                if (position == RecyclerView.NO_POSITION) {
+                    return;
+                }
+                JSONObject removed = eventAdapter.getItem(position);
+                String eventId = eventAdapter.getEventId(position);
+                if (eventId.isEmpty()) {
+                    eventAdapter.notifyItemChanged(position);
+                    return;
+                }
+                eventAdapter.removeItem(position);
+                queue.execute(() -> {
+                    JSONObject response = deleteEventRequest(eventId);
+                    if (response == null || !response.optBoolean("applied", false)) {
+                        runOnUiThread(() -> {
+                            if (removed != null) {
+                                eventAdapter.restoreItem(removed, position);
+                            }
+                        });
+                    } else {
+                        handleCommandResponse(response);
+                    }
+                });
+            }
+
+            @Override
+            public void onChildDraw(Canvas canvas, RecyclerView recyclerView, RecyclerView.ViewHolder viewHolder,
+                                    float dX, float dY, int actionState, boolean isCurrentlyActive) {
+                View itemView = viewHolder.itemView;
+                if (dX < 0) {
+                    canvas.drawRect(itemView.getRight() + dX, itemView.getTop(),
+                            itemView.getRight(), itemView.getBottom(), backgroundPaint);
+                    canvas.drawText("Delete", itemView.getRight() - dp(78),
+                            itemView.getTop() + (itemView.getHeight() / 2f) + dp(5), textPaint);
+                }
+                super.onChildDraw(canvas, recyclerView, viewHolder, dX, dY, actionState, isCurrentlyActive);
+            }
+        };
+    }
+
     private LinearLayout pane() {
         LinearLayout pane = new LinearLayout(this);
         pane.setOrientation(LinearLayout.VERTICAL);
@@ -345,9 +437,11 @@ public class MainActivity extends Activity {
         chatPane.setVisibility(index == 0 ? View.VISIBLE : View.GONE);
         calendarPane.setVisibility(index == 1 ? View.VISIBLE : View.GONE);
         taskPane.setVisibility(index == 2 ? View.VISIBLE : View.GONE);
+        settingsPane.setVisibility(index == 3 ? View.VISIBLE : View.GONE);
         styleTab(chatTab, index == 0);
         styleTab(calendarTab, index == 1);
         styleTab(taskTab, index == 2);
+        styleTab(settingsTab, index == 3);
     }
 
     private void styleTab(Button button, boolean selected) {
@@ -408,10 +502,25 @@ public class MainActivity extends Activity {
 
     private void savePrefs() {
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
-                .putString(PREF_SERVER_URL, serverEdit.getText().toString().trim())
+                .putString(PREF_SERVER_URL, normalizeServerUrl(serverEdit.getText().toString().trim()))
                 .putString(PREF_API_KEY, apiKeyEdit.getText().toString().trim())
                 .putString(PREF_ALARM_MINUTES, alarmMinutesEdit.getText().toString().trim())
+                .putBoolean(PREF_TTS_ENABLED, ttsOffCheck == null || !ttsOffCheck.isChecked())
                 .apply();
+    }
+
+    private String normalizeServerUrl(String value) {
+        String url = value == null ? "" : value.trim();
+        String legacyName = "bam" + "boo";
+        String legacyDomain = "com" + "munity.mooo.com";
+        String legacyTypoDomain = "com" + "unity.mooo.com";
+        if (url.isEmpty()
+                || url.contains(legacyName)
+                || url.contains(legacyDomain)
+                || url.contains(legacyTypoDomain)) {
+            return DEFAULT_SERVER_URL;
+        }
+        return url;
     }
 
     private String getApiKey() {
@@ -508,32 +617,37 @@ public class MainActivity extends Activity {
 
     private JSONObject postWavToServer(File wav) {
         String boundary = "HomeVoiceBoundary" + System.currentTimeMillis();
+        String urlText = endpointUrl("stt-command");
         try {
-            URL url = new URL(endpointUrl("stt-command"));
-            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-            conn.setRequestMethod("POST");
-            conn.setConnectTimeout(5000);
-            conn.setReadTimeout(300000);
-            conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
-            addAuthHeader(conn);
-            conn.setDoOutput(true);
-            try (OutputStream out = conn.getOutputStream(); FileInputStream in = new FileInputStream(wav)) {
-                writeAscii(out, "--" + boundary + "\r\n");
-                writeAscii(out, "Content-Disposition: form-data; name=\"audio\"; filename=\"" + wav.getName() + "\"\r\n");
-                writeAscii(out, "Content-Type: audio/wav\r\n\r\n");
-                byte[] buffer = new byte[8192];
-                int read;
-                while ((read = in.read(buffer)) != -1) {
-                    out.write(buffer, 0, read);
-                }
-                writeAscii(out, "\r\n--" + boundary + "--\r\n");
-            }
-            int code = conn.getResponseCode();
-            return new JSONObject(readResponse(conn, code));
+            return postWavToServerUrl(wav, urlText, boundary);
         } catch (Exception e) {
             log("WAV upload failed: " + e.getMessage());
             return null;
         }
+    }
+
+    private JSONObject postWavToServerUrl(File wav, String urlText, String boundary) throws Exception {
+        URL url = new URL(urlText);
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestMethod("POST");
+        conn.setConnectTimeout(5000);
+        conn.setReadTimeout(300000);
+        conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
+        addAuthHeader(conn);
+        conn.setDoOutput(true);
+        try (OutputStream out = conn.getOutputStream(); FileInputStream in = new FileInputStream(wav)) {
+            writeAscii(out, "--" + boundary + "\r\n");
+            writeAscii(out, "Content-Disposition: form-data; name=\"audio\"; filename=\"" + wav.getName() + "\"\r\n");
+            writeAscii(out, "Content-Type: audio/wav\r\n\r\n");
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = in.read(buffer)) != -1) {
+                out.write(buffer, 0, read);
+            }
+            writeAscii(out, "\r\n--" + boundary + "--\r\n");
+        }
+        int code = conn.getResponseCode();
+        return new JSONObject(readResponse(conn, code));
     }
 
     private JSONObject requestJson(String method, String urlText, JSONObject body) {
@@ -571,7 +685,7 @@ public class MainActivity extends Activity {
     }
 
     private String endpointUrl(String endpoint) {
-        String base = serverEdit.getText().toString().trim();
+        String base = normalizeServerUrl(serverEdit.getText().toString().trim());
         String[] suffixes = {"/command", "/stt-command", "/schedule", "/proposal/accept", "/proposal/reject", "/proposal/accept-all"};
         for (String suffix : suffixes) {
             if (base.endsWith(suffix)) {
@@ -815,7 +929,11 @@ public class MainActivity extends Activity {
         if (eventId == null || eventId.isEmpty()) {
             return;
         }
-        queue.execute(() -> handleCommandResponse(requestJson("DELETE", endpointUrl("event/" + encodePath(eventId)), null)));
+        queue.execute(() -> handleCommandResponse(deleteEventRequest(eventId)));
+    }
+
+    private JSONObject deleteEventRequest(String eventId) {
+        return requestJson("DELETE", endpointUrl("event/" + encodePath(eventId)), null);
     }
 
     private String encodePath(String value) {
@@ -942,6 +1060,9 @@ public class MainActivity extends Activity {
 
     private void speak(String text) {
         if (text == null || text.trim().isEmpty()) {
+            return;
+        }
+        if (ttsOffCheck != null && ttsOffCheck.isChecked()) {
             return;
         }
         runOnUiThread(() -> {

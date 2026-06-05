@@ -31,6 +31,34 @@ final class EventAdapter extends RecyclerView.Adapter<EventAdapter.EventViewHold
         notifyDataSetChanged();
     }
 
+    String getEventId(int position) {
+        if (position < 0 || position >= events.size()) {
+            return "";
+        }
+        return events.get(position).optString("id", "");
+    }
+
+    void removeItem(int position) {
+        if (position < 0 || position >= events.size()) {
+            return;
+        }
+        events.remove(position);
+        notifyItemRemoved(position);
+    }
+
+    void restoreItem(JSONObject event, int position) {
+        int safePosition = Math.max(0, Math.min(position, events.size()));
+        events.add(safePosition, event);
+        notifyItemInserted(safePosition);
+    }
+
+    JSONObject getItem(int position) {
+        if (position < 0 || position >= events.size()) {
+            return null;
+        }
+        return events.get(position);
+    }
+
     @Override
     public EventViewHolder onCreateViewHolder(ViewGroup parent, int viewType) {
         LinearLayout row = TaskAdapter.RowViews.itemShell(parent);

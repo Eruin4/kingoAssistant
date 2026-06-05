@@ -59,6 +59,13 @@ class ScheduleStore:
                 self._save_locked()
             return json_clone(self.state)
 
+    def ai_context(self, *, history_limit: int = 10) -> dict[str, Any]:
+        snapshot = self.snapshot()
+        history = snapshot.get("chat_history")
+        if isinstance(history, list):
+            snapshot["chat_history"] = history[-history_limit:]
+        return snapshot
+
     def handle_ai_command(self, command: dict[str, Any], *, user_text: str = "") -> dict[str, Any]:
         with self.lock:
             action = str(command.get("action", "")).strip()
@@ -432,7 +439,16 @@ def build_voice_prompt(user_text: str, schedule: dict[str, Any]) -> str:
         "\"date\":\"YYYY-MM-DD\",\"start_time\":\"HH:MM\",\"end_time\":\"HH:MM\",\"memo\":\"...\","
         "\"id\":\"existing item id for deletes\",\"message\":\"short Korean response for TTS\"}\n"
         "Use propose_* for all create/delete changes. Use query_* for schedule lookups. "
-        "Use question if required date/time/title details are missing.\n"
+        "Classify calendar events and non-calendar tasks conservatively:\n"
+        "- Use propose_add_event when the user gives or clearly implies a calendar date/day/time/deadline/appointment.\n"
+        "- If the user gives a date or day but no time, still use propose_add_event and set start_time to \"00:00\".\n"
+        "- Relative dates such as \"다음주 월요일\", \"내일\", \"이번 금요일\" are calendar signals. Resolve them to YYYY-MM-DD using Today.\n"
+        "- Use propose_add_task for non-calendar work items, study items, assignments, problem solving, reading, errands, or chores.\n"
+        "- If the user only says a task title without a date/day/time, still create propose_add_task. Do not ask when to schedule it.\n"
+        "- Examples: \"선형대수 문제풀이\", \"물리 과제\", \"논문 읽기\", \"장보기\" are propose_add_task.\n"
+        "- Examples: \"다음주 월요일 선형대수 문제풀이\", \"내일 물리 과제\" are propose_add_event with start_time \"00:00\" if no time is given.\n"
+        "- Use question only when the user's intent cannot be classified, or a calendar event is requested but the title itself is missing.\n"
+        "- If STT produced a likely typo for a common Korean subject or task title, use the best natural correction in title and do not ask just to confirm spelling.\n"
         f"Today: {today}\n"
         f"Current schedule: {json.dumps(schedule, ensure_ascii=False)}\n"
         f"User input: {user_text}"
@@ -463,14 +479,32 @@ def fallback_structured_command(command: str) -> dict[str, Any]:
     text = command.strip()
     if not text:
         return {"action": "question", "message": "말씀하신 내용을 듣지 못했습니다."}
-    if any(word in text for word in ("할 일", "작업", "task", "todo", "투두")):
+    task_words = (
+        "할 일", "작업", "task", "todo", "투두", "문제", "문제풀이", "풀이", "과제",
+        "숙제", "공부", "복습", "예습", "읽기", "정리", "작성", "제출", "장보기",
+    )
+    date_time_words = (
+        "오늘", "내일", "모레", "이번", "다음", "월요일", "화요일", "수요일", "목요일",
+        "금요일", "토요일", "일요일", "오전", "오후", "시", "분", "까지", "마감",
+        "회의", "약속", "일정",
+    )
+    has_date_or_time = any(word in text for word in date_time_words)
+    if any(word in text for word in task_words) and not has_date_or_time:
         return {"action": "propose_add_task", "title": text, "message": "할 일 추가를 제안했습니다."}
     if any(word in text for word in ("삭제", "지워", "빼줘", "완료")):
         return {"action": "propose_delete_task", "title": text, "message": "삭제를 제안했습니다."}
     if any(word in text for word in ("확인", "보여", "목록", "뭐")):
         return {"action": "query_events", "message": "현재 일정을 확인했습니다."}
     calendar = "calendar_2" if "2" in text or "두 번째" in text else "calendar_1"
-    return {"action": "propose_add_event", "calendar": calendar, "title": text, "message": "일정 추가를 제안했습니다."}
+    if has_date_or_time:
+        return {
+            "action": "propose_add_event",
+            "calendar": calendar,
+            "title": text,
+            "start_time": "00:00",
+            "message": "일정 추가를 제안했습니다.",
+        }
+    return {"action": "propose_add_task", "title": text, "message": "할 일 추가를 제안했습니다."}
 
 
 def run_kingogpt(prompt: str, server: ThreadingHTTPServer) -> tuple[str, str | None]:
@@ -735,7 +769,7 @@ class HomeVoiceHandler(BaseHTTPRequestHandler):
         kingogpt_error = None
         structured = None
         if command.strip():
-            raw_ai, kingogpt_error = run_kingogpt(build_voice_prompt(command, store.snapshot()), self.server)
+            raw_ai, kingogpt_error = run_kingogpt(build_voice_prompt(command, store.ai_context()), self.server)
             structured = extract_json_object(raw_ai)
         if structured is None:
             structured = fallback_structured_command(command)

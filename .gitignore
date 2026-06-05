@@ -25,6 +25,7 @@ kingogpt_chrome_profile*/
 *.secret
 *.env
 .env
+server/123.txt
 
 # Vendored/generated native artifacts
 native/third_party/
@@ -37,5 +38,6 @@ native/third_party/
 .idea/
 .vscode/
 *.iml
+local.properties
 Thumbs.db
 .DS_Store

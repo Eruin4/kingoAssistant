@@ -6,7 +6,7 @@ Flow:
 
 1. Android shows chat, combined calendar, and sequential task panes.
 2. Tap the mic button once to start recording and again to send the command.
-3. Android uploads a 16 kHz mono WAV to `http://192.168.0.3:8001/stt-command`.
+3. Android uploads a 16 kHz mono WAV to `https://eruin.mooo.com/voice/stt-command`.
 4. The Docker server runs `whisper.cpp` STT.
 5. The STT text is sent to `kingogpt_api_solver.py` with the current schedule.
 6. KingoGPT returns one structured JSON command such as `propose_add_event` or `propose_add_task`.

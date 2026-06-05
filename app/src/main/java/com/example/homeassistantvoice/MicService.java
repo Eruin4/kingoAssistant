@@ -31,6 +31,7 @@ public class MicService extends Service {
     static final String EXTRA_RECORDING = "recording";
 
     private static final int NOTIFICATION_ID = 9001;
+    private static final String DEFAULT_SERVER_URL = "https://eruin.mooo.com/voice";
 
     private final WavRecorder recorder = new WavRecorder();
     private final ExecutorService queue = Executors.newSingleThreadExecutor();
@@ -95,9 +96,10 @@ public class MicService extends Service {
                     String text = response.optString("response", "");
                     broadcastScheduleChanged();
                     if (!text.isEmpty()) {
-                        speak(text);
-                        // Wait a bit for TTS to finish before stopping
-                        Thread.sleep(Math.min(text.length() * 150L, 10000));
+                        if (speak(text)) {
+                            // Wait a bit for TTS to finish before stopping.
+                            Thread.sleep(Math.min(text.length() * 150L, 10000));
+                        }
                     }
                 }
             } catch (Exception ignored) {
@@ -110,7 +112,7 @@ public class MicService extends Service {
 
     private JSONObject uploadWav(File wav) {
         SharedPreferences prefs = getSharedPreferences(MainActivity.PREFS_NAME, MODE_PRIVATE);
-        String serverUrl = prefs.getString(MainActivity.PREF_SERVER_URL, "");
+        String serverUrl = normalizeServerUrl(prefs.getString(MainActivity.PREF_SERVER_URL, ""));
         String apiKey = prefs.getString(MainActivity.PREF_API_KEY, "");
 
         if (serverUrl.isEmpty()) {
@@ -118,57 +120,86 @@ public class MicService extends Service {
         }
 
         String boundary = "WidgetBoundary" + System.currentTimeMillis();
+        String endpoint = endpointUrl(serverUrl, "stt-command");
         try {
-            String endpoint = serverUrl;
-            if (!endpoint.endsWith("/")) endpoint += "/";
-            endpoint += "stt-command";
-
-            URL url = new URL(endpoint);
-            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-            conn.setRequestMethod("POST");
-            conn.setConnectTimeout(5000);
-            conn.setReadTimeout(300000);
-            conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
-            if (!apiKey.isEmpty()) {
-                conn.setRequestProperty("Authorization", "Bearer " + apiKey);
-            }
-            conn.setDoOutput(true);
-
-            try (OutputStream out = conn.getOutputStream(); FileInputStream in = new FileInputStream(wav)) {
-                writeAscii(out, "--" + boundary + "\r\n");
-                writeAscii(out, "Content-Disposition: form-data; name=\"audio\"; filename=\"" + wav.getName() + "\"\r\n");
-                writeAscii(out, "Content-Type: audio/wav\r\n\r\n");
-                byte[] buffer = new byte[8192];
-                int read;
-                while ((read = in.read(buffer)) != -1) {
-                    out.write(buffer, 0, read);
-                }
-                writeAscii(out, "\r\n--" + boundary + "--\r\n");
-            }
-
-            int code = conn.getResponseCode();
-            BufferedReader reader = new BufferedReader(new InputStreamReader(
-                    code >= 200 && code < 300 ? conn.getInputStream() : conn.getErrorStream(),
-                    StandardCharsets.UTF_8));
-            StringBuilder response = new StringBuilder();
-            String line;
-            while ((line = reader.readLine()) != null) {
-                response.append(line);
-            }
-            return new JSONObject(response.toString());
+            return uploadWavToEndpoint(wav, endpoint, boundary, apiKey);
         } catch (Exception e) {
             return null;
         }
+    }
+
+    private JSONObject uploadWavToEndpoint(File wav, String endpoint, String boundary, String apiKey) throws Exception {
+        URL url = new URL(endpoint);
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestMethod("POST");
+        conn.setConnectTimeout(5000);
+        conn.setReadTimeout(300000);
+        conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
+        if (!apiKey.isEmpty()) {
+            conn.setRequestProperty("Authorization", "Bearer " + apiKey);
+        }
+        conn.setDoOutput(true);
+
+        try (OutputStream out = conn.getOutputStream(); FileInputStream in = new FileInputStream(wav)) {
+            writeAscii(out, "--" + boundary + "\r\n");
+            writeAscii(out, "Content-Disposition: form-data; name=\"audio\"; filename=\"" + wav.getName() + "\"\r\n");
+            writeAscii(out, "Content-Type: audio/wav\r\n\r\n");
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = in.read(buffer)) != -1) {
+                out.write(buffer, 0, read);
+            }
+            writeAscii(out, "\r\n--" + boundary + "--\r\n");
+        }
+
+        int code = conn.getResponseCode();
+        BufferedReader reader = new BufferedReader(new InputStreamReader(
+                code >= 200 && code < 300 ? conn.getInputStream() : conn.getErrorStream(),
+                StandardCharsets.UTF_8));
+        StringBuilder response = new StringBuilder();
+        String line;
+        while ((line = reader.readLine()) != null) {
+            response.append(line);
+        }
+        return new JSONObject(response.toString());
+    }
+
+    private String endpointUrl(String serverUrl, String endpoint) {
+        String base = serverUrl;
+        if (!base.endsWith("/")) {
+            base += "/";
+        }
+        return base + endpoint;
+    }
+
+    private String normalizeServerUrl(String value) {
+        String url = value == null ? "" : value.trim();
+        String legacyName = "bam" + "boo";
+        String legacyDomain = "com" + "munity.mooo.com";
+        String legacyTypoDomain = "com" + "unity.mooo.com";
+        if (url.isEmpty()
+                || url.contains(legacyName)
+                || url.contains(legacyDomain)
+                || url.contains(legacyTypoDomain)) {
+            return DEFAULT_SERVER_URL;
+        }
+        return url;
     }
 
     private void writeAscii(OutputStream out, String value) throws java.io.IOException {
         out.write(value.getBytes(StandardCharsets.US_ASCII));
     }
 
-    private void speak(String text) {
+    private boolean speak(String text) {
+        SharedPreferences prefs = getSharedPreferences(MainActivity.PREFS_NAME, MODE_PRIVATE);
+        if (!prefs.getBoolean(MainActivity.PREF_TTS_ENABLED, true)) {
+            return false;
+        }
         if (tts != null && text != null && !text.trim().isEmpty()) {
             tts.speak(text, TextToSpeech.QUEUE_ADD, null, "widget-tts-" + System.currentTimeMillis());
+            return true;
         }
+        return false;
     }
 
     private Notification buildNotification(String text) {
